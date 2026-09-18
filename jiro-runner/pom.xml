@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.github.eegn.jiro</groupId>
+    <artifactId>jiro-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>jiro-runner</artifactId>
+  <name>jiro :: runner</name>
+  <description>
+    Main class of the long-lived forked test JVM. Owns the JUnit Platform Launcher
+    and binds recorded probes to the test that caused them.
+  </description>
+
+  <!-- No JUnit dependency, deliberately. The runner binds to the project's own JUnit Platform at
+       runtime through JUnitBridge; carrying its own copy is what caused Jupiter to silently
+       discover zero tests against a project on an older platform. -->
+  <dependencies>
+    <dependency>
+      <groupId>io.github.eegn.jiro</groupId>
+      <artifactId>jiro-runtime</artifactId>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <archive>
+            <manifest>
+              <mainClass>io.github.eegn.jiro.runner.RunnerMain</mainClass>
+            </manifest>
+          </archive>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

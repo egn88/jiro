@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""
+Block until the running `mvn jiro:dev` session has judged the edits you just made, then print
+its verdict as JSON.
+
+This is the interface a coding agent uses. The agent does not compile and does not run tests: it
+writes files, calls this, and reads the answer. Typical use, straight after editing sources:
+
+    bin/jiro-await --since-now --timeout 30
+
+Exit codes are the verdict, so a shell can branch on them without parsing anything:
+
+    0  green        every selected test passed
+    1  red          at least one selected test failed
+    2  compile      javac rejected the change
+    3  timeout      no verdict arrived in time
+    4  no session   jiro:dev is not running, or has not written a status file yet
+
+The --since guard is the point of the tool. status.json always holds *some* verdict, and reading
+it immediately after an edit otherwise returns the previous cycle's answer, which is how an agent
+convinces itself that code it has just broken still works.
+"""
+
+import argparse
+import json
+import os
+import sys
+import time
+
+DEFAULT_STATUS = os.path.join("target", "jiro", "status.json")
+
+
+def read_status(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError, PermissionError):
+        # A missing or half-read file is a normal race with the writer, not an error.
+        return None
+
+
+def newest_source_mtime(roots):
+    newest = 0.0
+    for root in roots:
+        for directory, _, files in os.walk(root):
+            for name in files:
+                if name.endswith(".java"):
+                    try:
+                        newest = max(newest, os.path.getmtime(os.path.join(directory, name)))
+                    except OSError:
+                        pass
+    return newest * 1000.0
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Wait for the next jiro verdict.")
+    parser.add_argument("--status", default=DEFAULT_STATUS,
+                        help="path to status.json (default: %(default)s)")
+    parser.add_argument("--since", type=float, default=None,
+                        help="require a verdict covering sources modified at or after this epoch-ms")
+    parser.add_argument("--since-now", action="store_true",
+                        help="require a verdict covering the newest .java file on disk right now")
+    parser.add_argument("--src", action="append", default=None,
+                        help="source root for --since-now (repeatable; default: src)")
+    parser.add_argument("--timeout", type=float, default=30.0, help="seconds to wait")
+    parser.add_argument("--poll", type=float, default=0.1, help="poll interval in seconds")
+    parser.add_argument("--quiet", action="store_true", help="exit code only, no output")
+    arguments = parser.parse_args()
+
+    since = arguments.since
+    if arguments.since_now:
+        roots = arguments.src or ["src"]
+        since = max(since or 0.0, newest_source_mtime(roots))
+
+    deadline = time.time() + arguments.timeout
+    last = None
+    while time.time() < deadline:
+        status = read_status(arguments.status)
+        if status is not None:
+            last = status
+            fresh = since is None or status.get("inputWatermarkMillis", 0) >= since - 1
+            if status.get("terminal") and fresh:
+                if not arguments.quiet:
+                    json.dump(status, sys.stdout, indent=2)
+                    sys.stdout.write("\n")
+                state = status.get("state")
+                return 0 if state == "GREEN" else 2 if state == "COMPILE_ERROR" else 1
+        time.sleep(arguments.poll)
+
+    if last is None:
+        if not arguments.quiet:
+            sys.stderr.write(
+                "No jiro status at %s. Is `mvn jiro:dev` running?\n" % arguments.status)
+        return 4
+    if not arguments.quiet:
+        sys.stderr.write("Timed out waiting for a verdict newer than the last edit.\n")
+        json.dump(last, sys.stderr, indent=2)
+        sys.stderr.write("\n")
+    return 3
+
+
+if __name__ == "__main__":
+    sys.exit(main())

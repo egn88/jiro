@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.github.eegn.jiro</groupId>
+    <artifactId>jiro-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>jiro-maven-plugin</artifactId>
+  <packaging>maven-plugin</packaging>
+  <name>jiro :: maven-plugin</name>
+  <description>The `jiro:dev` goal: watch, recompile, select and run.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.github.eegn.jiro</groupId>
+      <artifactId>jiro-core</artifactId>
+    </dependency>
+    <!-- Not used on the plugin's own classpath. Declared so that the resolved jar
+         files show up in ${plugin.artifacts} and can be handed to the forked JVM. -->
+    <dependency>
+      <groupId>io.github.eegn.jiro</groupId>
+      <artifactId>jiro-agent</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.github.eegn.jiro</groupId>
+      <artifactId>jiro-runner</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.github.eegn.jiro</groupId>
+      <artifactId>jiro-runtime</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.apache.maven</groupId>
+      <artifactId>maven-plugin-api</artifactId>
+      <version>${maven.api.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.maven</groupId>
+      <artifactId>maven-core</artifactId>
+      <version>${maven.api.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.maven.plugin-tools</groupId>
+      <artifactId>maven-plugin-annotations</artifactId>
+      <version>${maven.plugin.tools.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <!-- Used to resolve a junit-platform-launcher matching the project's own platform version. -->
+    <dependency>
+      <groupId>org.apache.maven.resolver</groupId>
+      <artifactId>maven-resolver-api</artifactId>
+      <version>${maven.resolver.version}</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-plugin-plugin</artifactId>
+        <configuration>
+          <goalPrefix>jiro</goalPrefix>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
