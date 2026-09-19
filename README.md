@@ -27,11 +27,13 @@ normalised bytecode, so reformatting, renaming a local or moving a method select
 Needs a JDK 17 or later — a JDK, not a JRE, because jiro compiles in-process — Maven 3.9+, and
 JUnit 5 (JUnit 4 works through the vintage engine).
 
-jiro is not on Maven Central yet, so install it into your local repository first:
+jiro is not on Maven Central yet, so install it into your local repository first. Check out the
+release tag — `main` carries the next snapshot, which is not the version referenced below:
 
 ```
-git clone git@github.com:egn88/jiro.git
+git clone https://github.com/egn88/jiro.git
 cd jiro
+git checkout v0.0.1
 mvn install
 ```
 
