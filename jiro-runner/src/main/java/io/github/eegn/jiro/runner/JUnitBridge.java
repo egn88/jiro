@@ -156,8 +156,80 @@ final class JUnitBridge {
         return String.valueOf(resultType.getMethod("getStatus").invoke(result));
     }
 
-    String failure(Object result) throws ReflectiveOperationException {
-        Optional<?> throwable = (Optional<?>) resultType.getMethod("getThrowable").invoke(result);
-        return throwable.map(String::valueOf).orElse(null);
+    /**
+     * The failure as {@code [type, message, frame...]}, or {@code null} if the test passed.
+     *
+     * <p>Frames from the JDK and the test framework are dropped. What is left is the project's own
+     * code, which is the only part a reader can act on — and the first surviving frame is almost
+     * always the assertion that failed, with its file and line.
+     */
+    List<String> failureDetail(Object result) throws ReflectiveOperationException {
+        Optional<?> maybe = (Optional<?>) resultType.getMethod("getThrowable").invoke(result);
+        if (maybe.isEmpty()) {
+            return null;
+        }
+        Throwable throwable = (Throwable) maybe.get();
+        List<String> detail = new ArrayList<>();
+        detail.add(throwable.getClass().getName());
+        detail.add(throwable.getMessage() == null ? "" : throwable.getMessage());
+        addFrames(detail, throwable);
+
+        Throwable cause = throwable.getCause();
+        if (cause != null && cause != throwable) {
+            detail.add("Caused by: " + cause.getClass().getName()
+                    + (cause.getMessage() == null ? "" : ": " + cause.getMessage()));
+            addFrames(detail, cause);
+        }
+        return detail;
+    }
+
+    private static void addFrames(List<String> detail, Throwable throwable) {
+        int kept = 0;
+        for (StackTraceElement frame : throwable.getStackTrace()) {
+            if (kept >= 12) {
+                break;
+            }
+            if (isNoise(frame.getClassName())) {
+                continue;
+            }
+            detail.add(format(frame));
+            kept++;
+        }
+    }
+
+    /**
+     * {@code com.acme.OrderTest.total(OrderTest.java:41)}.
+     *
+     * <p>Built by hand rather than with {@code StackTraceElement.toString()}, which prefixes frames
+     * with the defining classloader's name once that loader is named — every application frame
+     * would otherwise arrive as {@code jiro-application//com.acme...}, which is an artefact of how
+     * jiro loads the code and nothing a reader should have to strip.
+     */
+    private static String format(StackTraceElement frame) {
+        StringBuilder text = new StringBuilder()
+                .append(frame.getClassName()).append('.').append(frame.getMethodName()).append('(');
+        if (frame.getFileName() == null) {
+            text.append("Unknown Source");
+        } else {
+            text.append(frame.getFileName());
+            if (frame.getLineNumber() > 0) {
+                text.append(':').append(frame.getLineNumber());
+            }
+        }
+        return text.append(')').toString();
+    }
+
+    private static boolean isNoise(String className) {
+        return className.startsWith("java.")
+                || className.startsWith("jdk.")
+                || className.startsWith("sun.")
+                || className.startsWith("javax.")
+                || className.startsWith("org.junit.")
+                || className.startsWith("org.opentest4j.")
+                || className.startsWith("org.assertj.")
+                || className.startsWith("org.mockito.")
+                || className.startsWith("net.bytebuddy.")
+                || className.startsWith("org.springframework.test.")
+                || className.startsWith("io.github.eegn.jiro.");
     }
 }

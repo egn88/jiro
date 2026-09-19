@@ -196,6 +196,17 @@ is the fix.
 `.feature` files from the classpath root and ignores `ClassNameFilter`, so jiro ran one scenario
 `mvn test` does not. Engine-level include/exclude is needed.
 
+**A stale `target/classes` makes the first cycles lie.** jiro seeds its fingerprint snapshot from
+whatever bytecode is already in the output directory at startup. If that does not match the source
+tree — a killed session, a `git checkout` made while jiro was down — the first edits diff against
+the wrong baseline and report nonsense, and the startup baseline run tests code that is not what is
+on disk. Running `mvn test-compile` before `jiro:dev` avoids it; jiro should detect the skew itself.
+
+**Failsafe and Surefire configuration is not inherited.** `argLine`, `systemPropertyVariables` and
+the active Spring profile have to be passed by hand through `jiro.jvmArgs`. For unit tests this
+rarely matters; for integration tests it is the difference between a working context and a wall of
+failures. Reading them out of the project model is the fix.
+
 **Static state leaks across cycles.** A fresh classloader per cycle gives fresh statics for
 application classes, but anything cached on the bootstrap or system loader — and any thread pool,
 JDBC driver registration or shutdown hook the previous cycle left running — survives. Long sessions
@@ -221,14 +232,16 @@ it is probably the largest missing feature rather than a sharp edge.
 
 ## Roadmap
 
-1. Read the project's Surefire configuration rather than assuming its defaults.
+1. Read the project's Surefire configuration — includes, excludes and system properties — rather
+   than assuming its defaults.
 2. Engine-level include/exclude, so Cucumber and friends honour the same alignment.
 3. Multi-module reactor support.
 4. Persist fingerprints alongside the coverage index so a session can resume without a baseline run.
 5. A periodic fork restart, to bound static-state drift over a long session.
-6. An MCP server wrapping the index — `jiro_status`, `jiro_failures`, `jiro_impact_of(file)` — so an
+6. Detect a `target/classes` that does not match the source tree at startup.
+7. An MCP server wrapping the index — `jiro_status`, `jiro_failures`, `jiro_impact_of(file)` — so an
    agent can ask "what would change if I touched this?" before editing rather than after.
-7. Probe optimisation: a static `boolean[]` field per class resolved once in `<clinit>`, replacing
+8. Probe optimisation: a static `boolean[]` field per class resolved once in `<clinit>`, replacing
    the static call per method entry.
 
 ## Measured behaviour

@@ -99,7 +99,7 @@ final class CoverageBindingListener implements InvocationHandler {
                     junit.uniqueId(identifier),
                     junit.displayName(identifier),
                     junit.status(result),
-                    junit.failure(result),
+                    junit.failureDetail(result),
                     covered));
             return;
         }
@@ -154,7 +154,8 @@ final class CoverageBindingListener implements InvocationHandler {
         return keys;
     }
 
-    record TestOutcome(String uniqueId, String displayName, String status, String failure,
+    /** @param failure {@code [type, message, frame...]}, or {@code null} when the test passed */
+    record TestOutcome(String uniqueId, String displayName, String status, List<String> failure,
                        Set<String> coveredMethods) {
     }
 }

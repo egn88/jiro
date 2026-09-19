@@ -1,5 +1,6 @@
 package io.github.eegn.jiro.core.report;
 
+import io.github.eegn.jiro.core.compile.CompileError;
 import java.util.List;
 
 /**
@@ -19,18 +20,19 @@ import java.util.List;
  * @param inputWatermarkMillis newest last-modified time among the sources this cycle considered
  * @param startedAtMillis      wall-clock start of the cycle
  * @param durationMillis       compile plus test time, once the cycle is terminal
- * @param compileErrors        formatted javac errors; non-empty implies {@link State#COMPILE_ERROR}
+ * @param compileErrors        structured javac errors; non-empty implies {@link State#COMPILE_ERROR}
  * @param selectionReason      why these tests and not others, in one human-readable line
  * @param selectedTests        how many tests the selector chose
  * @param passed               how many of them passed
- * @param failures             the ones that did not, with a one-line message each
+ * @param failures             the ones that did not, each with its exception type, message and
+ *                             the stack frames belonging to the project
  */
 public record CycleReport(long cycleId,
                           State state,
                           long inputWatermarkMillis,
                           long startedAtMillis,
                           long durationMillis,
-                          List<String> compileErrors,
+                          List<CompileError> compileErrors,
                           String selectionReason,
                           int selectedTests,
                           int passed,
@@ -54,7 +56,14 @@ public record CycleReport(long cycleId,
         }
     }
 
-    public record FailedTest(String uniqueId, String displayName, String message) {
+    /**
+     * @param type    fully qualified exception class, e.g. {@code org.opentest4j.AssertionFailedError}
+     * @param message the exception's own message, newlines preserved
+     * @param trace   stack frames with JDK and framework noise removed; the first is usually the
+     *                failing assertion, carrying its file and line
+     */
+    public record FailedTest(String uniqueId, String displayName, String type, String message,
+                             List<String> trace) {
     }
 
     public static CycleReport starting(long cycleId, long inputWatermarkMillis) {
@@ -67,7 +76,7 @@ public record CycleReport(long cycleId,
                 0L, List.of(), selectionReason, selectedTests, 0, List.of());
     }
 
-    public CycleReport compileFailed(List<String> errors) {
+    public CycleReport compileFailed(List<CompileError> errors) {
         return new CycleReport(cycleId, State.COMPILE_ERROR, inputWatermarkMillis, startedAtMillis,
                 System.currentTimeMillis() - startedAtMillis, errors,
                 "compilation failed, no tests selected", 0, 0, List.of());

@@ -133,8 +133,10 @@ public final class RunnerMain {
                         + outcome.uniqueId());
                 if (outcome.failure() != null) {
                     out.println(Protocol.FAILURE + " " + outcome.uniqueId() + " "
-                            + Protocol.oneLine(outcome.failure()));
+                            + Protocol.pack(outcome.failure()));
                 }
+                out.println(Protocol.NAME + " " + outcome.uniqueId() + " "
+                        + Protocol.oneLine(outcome.displayName()));
                 out.println(Protocol.COVERAGE + " " + outcome.uniqueId() + " "
                         + String.join(",", outcome.coveredMethods()));
             }

@@ -54,7 +54,7 @@ This is a first-class use case, not an afterthought. An agent working in a repo 
 is already running should **never invoke a build**. It edits files and reads verdicts.
 
 Every cycle is published to `target/jiro/status.json`, replaced atomically so a reader can never
-see a partial write:
+see a partial write. Failures are structured for acting on, not just for reading:
 
 ```json
 {
@@ -62,38 +62,85 @@ see a partial write:
   "state": "RED",
   "terminal": true,
   "inputWatermarkMillis": 1758231847221,
-  "durationMillis": 312,
-  "selectionReason": "2 method(s), 0 ABI change(s), 0 added, 0 removed",
-  "selectedTests": 4,
-  "passed": 3,
-  "failed": 1,
+  "selectedTests": 9,
+  "passed": 7,
+  "failed": 2,
   "compileErrors": [],
   "failures": [
-    {"uniqueId": "[engine:junit-jupiter]/[class:com.acme.OrderServiceTest]/[method:appliesDiscount()]",
-     "displayName": "OrderServiceTest.appliesDiscount",
-     "message": "org.opentest4j.AssertionFailedError: expected: <90> but was: <100>"}
+    {
+      "uniqueId": "[engine:junit-jupiter]/[class:com.acme.UserMapperTest]/[method:testUserToUserDTO()]",
+      "displayName": "UserMapperTest.testUserToUserDTO()",
+      "type": "org.opentest4j.AssertionFailedError",
+      "message": "\nexpected: \"johndoe\"\n but was: \"BROKEN-johndoe\"",
+      "trace": ["com.acme.UserMapperTest.testUserToUserDTO(UserMapperTest.java:74)"]
+    }
   ]
 }
 ```
 
-The one thing an agent must get right is staleness: `status.json` always holds *some* verdict, and
-reading it straight after an edit returns the **previous** cycle's answer. `inputWatermarkMillis`
-is the guard — it is the newest modification time among the sources that cycle considered. Wait
-until `terminal` is true *and* the watermark is at or past your edit.
+The `trace` is filtered to the project's own frames — JDK, JUnit, AssertJ, Mockito and Spring test
+infrastructure are stripped — so the first entry is almost always the assertion that failed, with
+its file and line. That is the difference between an agent knowing something broke and knowing
+where to edit.
 
-`bin/jiro-await` does exactly that:
+Compile errors are structured the same way, and carry the offending line so the file need not be
+reopened:
+
+```json
+"compileErrors": [
+  {
+    "file": "/home/you/project/src/main/java/com/acme/UserDTO.java",
+    "line": 64,
+    "column": 26,
+    "message": "cannot find symbol\n  symbol:   method getLogimn()\n  location: variable user of type com.acme.User",
+    "sourceLine": "this.login = user.getLogimn();"
+  }
+]
+```
+
+### Staying in step
+
+`status.json` always holds *some* verdict, so reading it straight after an edit returns the
+**previous** cycle's answer. Two guards are available, and `bin/jiro-await` implements both:
 
 ```
-bin/jiro-await --since-now --timeout 30
+bin/jiro-await --since-now          # verdict must cover the newest .java on disk
+bin/jiro-await --after-cycle 46     # verdict must have cycleId > 46
 ```
+
+`--after-cycle` is the stronger one for a scripted loop: `cycleId` is a counter jiro owns, so it
+needs no clock and cannot be confused by filesystem timestamp resolution. Read `cycleId` from each
+verdict, pass it to the next call.
 
 Exit code is the verdict: `0` green, `1` red, `2` compile error, `3` timeout, `4` no session.
 
-So an agent's inner loop becomes: edit → `jiro-await` → read failures → edit. No `mvn` invocation,
-no JVM start, no full suite. The feedback is the same few hundred milliseconds a human gets.
+You do **not** need to delete `status.json` between reads. It is replaced every cycle rather than
+appended to, so it never grows, and its reappearance would not prove the verdict covers *your*
+edit — a cycle triggered by something else recreates it too. Deleting it is nonetheless harmless if
+you prefer: the writer holds no handle on it.
 
-`target/jiro/events.ndjson` keeps one line per completed cycle if you want the history, and
+`target/jiro/events.ndjson` keeps one line per completed cycle, rotated at 4MB, and
 `target/jiro/coverage.index` is plain text — grep it to find out which tests cover a given method.
+
+## Integration tests
+
+By default jiro runs what `mvn test` runs: Surefire's default class-name patterns, which exclude the
+`*IT` classes Failsafe owns. That is deliberate — a dev loop should reproduce the fast suite.
+
+It *can* run them:
+
+```
+mvn jiro:dev -Djiro.testClassPatterns='^(.*\.)?[^.$]*IT$' \
+             -Djiro.jvmArgs=-Dspring.profiles.active=testdev
+```
+
+But jiro does not inherit Failsafe's configuration — its `argLine`, `systemPropertyVariables` and
+active profile have to be passed through `jiro.jvmArgs` by hand, and if the environment those tests
+need is missing they fail here exactly as they would under `mvn verify`. Testcontainers itself works
+(the long-lived JVM actually helps: a container started in the first cycle is still up for the
+tenth), but a thirty-second container start does not belong in a loop whose selling point is
+sub-second feedback. Treat integration tests as something to opt into deliberately, not as the
+default mode.
 
 ## Requirements
 

@@ -73,9 +73,10 @@ public final class IncrementalCompiler {
                     fileManager.getJavaFileObjectsFromPaths(existing);
             boolean successful = compiler.getTask(null, fileManager, collector, options, null, units)
                     .call();
-            return new CompilationResult(successful, format(collector), existing);
+            return new CompilationResult(successful, toErrors(collector), existing);
         } catch (IOException failure) {
-            return new CompilationResult(false, List.of("[jiro] " + failure), existing);
+            return new CompilationResult(false,
+                    List.of(new CompileError(null, 0, 0, String.valueOf(failure), null)), existing);
         }
     }
 
@@ -87,18 +88,34 @@ public final class IncrementalCompiler {
         return files;
     }
 
-    private static List<String> format(DiagnosticCollector<JavaFileObject> collector) {
-        List<String> messages = new ArrayList<>();
+    private static List<CompileError> toErrors(DiagnosticCollector<JavaFileObject> collector) {
+        List<CompileError> errors = new ArrayList<>();
         for (Diagnostic<? extends JavaFileObject> diagnostic : collector.getDiagnostics()) {
             if (diagnostic.getKind() != Diagnostic.Kind.ERROR) {
                 continue;
             }
             JavaFileObject source = diagnostic.getSource();
-            String where = source == null
-                    ? "<unknown>"
-                    : Path.of(source.getName()).getFileName() + ":" + diagnostic.getLineNumber();
-            messages.add(where + " " + diagnostic.getMessage(Locale.ROOT));
+            String file = source == null ? null : Path.of(source.getName()).toAbsolutePath().toString();
+            errors.add(new CompileError(
+                    file,
+                    diagnostic.getLineNumber() < 0 ? 0 : diagnostic.getLineNumber(),
+                    diagnostic.getColumnNumber() < 0 ? 0 : diagnostic.getColumnNumber(),
+                    diagnostic.getMessage(Locale.ROOT),
+                    readLine(file, diagnostic.getLineNumber())));
         }
-        return messages;
+        return errors;
+    }
+
+    /** The offending source line, so a reader does not have to open the file to see it. */
+    private static String readLine(String file, long line) {
+        if (file == null || line <= 0) {
+            return null;
+        }
+        try {
+            List<String> lines = Files.readAllLines(Path.of(file));
+            return line <= lines.size() ? lines.get((int) line - 1).strip() : null;
+        } catch (IOException | RuntimeException unreadable) {
+            return null;
+        }
     }
 }

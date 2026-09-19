@@ -117,7 +117,8 @@ final class ForkedRunner implements AutoCloseable {
     private RunReport readReport() throws IOException {
         Map<String, String> statuses = new HashMap<>();
         Map<String, Long> durations = new HashMap<>();
-        Map<String, String> failures = new HashMap<>();
+        Map<String, List<String>> failures = new HashMap<>();
+        Map<String, String> names = new HashMap<>();
         Map<String, List<String>> coverage = new HashMap<>();
         List<String> errors = new ArrayList<>();
 
@@ -133,12 +134,16 @@ final class ForkedRunner implements AutoCloseable {
                 String[] parts = line.split(" ", 3);
                 String methods = parts.length == 3 ? parts[2] : "";
                 coverage.put(parts[1], methods.isEmpty() ? List.of() : List.of(methods.split(",")));
+            } else if (line.startsWith(Protocol.NAME + " ")) {
+                String[] parts = line.split(" ", 3);
+                names.put(parts[1], parts.length == 3 ? parts[2] : parts[1]);
             } else if (line.startsWith(Protocol.FAILURE + " ")) {
                 String[] parts = line.split(" ", 3);
+                String payload = parts.length == 3 ? parts[2] : "";
                 if (parts[1].startsWith("<")) {
-                    errors.add(parts.length == 3 ? parts[2] : parts[1]);
+                    errors.add(payload.isEmpty() ? parts[1] : payload);
                 } else {
-                    failures.put(parts[1], parts.length == 3 ? parts[2] : "");
+                    failures.put(parts[1], Protocol.unpack(payload));
                 }
             }
         }
@@ -149,20 +154,39 @@ final class ForkedRunner implements AutoCloseable {
         List<TestResult> results = new ArrayList<>(statuses.size());
         for (Map.Entry<String, String> status : statuses.entrySet()) {
             String uniqueId = status.getKey();
+            List<String> failure = failures.get(uniqueId);
             results.add(new TestResult(
                     uniqueId,
+                    names.getOrDefault(uniqueId, uniqueId),
                     status.getValue(),
                     durations.getOrDefault(uniqueId, 0L),
-                    failures.get(uniqueId),
+                    failure == null || failure.isEmpty() ? null : failure.get(0),
+                    failure == null || failure.size() < 2 ? null : failure.get(1),
+                    failure == null || failure.size() < 3 ? List.of()
+                            : List.copyOf(failure.subList(2, failure.size())),
                     coverage.getOrDefault(uniqueId, List.of())));
         }
         return new RunReport(results, errors);
     }
 
-    record TestResult(String uniqueId, String status, long millis, String failure,
+    /**
+     * @param failureType    exception class name, or {@code null} when the test passed
+     * @param failureMessage the exception's message
+     * @param trace          project stack frames, framework noise already removed
+     */
+    record TestResult(String uniqueId, String displayName, String status, long millis,
+                      String failureType, String failureMessage, List<String> trace,
                       List<String> coveredMethods) {
         boolean passed() {
             return "SUCCESSFUL".equals(status);
+        }
+
+        /** Console form: the message plus the frame that is almost always the failing assertion. */
+        String summary() {
+            String head = failureType == null ? status
+                    : failureType.substring(failureType.lastIndexOf('.') + 1)
+                      + (failureMessage == null || failureMessage.isBlank() ? "" : ": " + failureMessage);
+            return trace.isEmpty() ? head : head + "  at " + trace.get(0);
         }
     }
 

@@ -16,9 +16,23 @@ Exit codes are the verdict, so a shell can branch on them without parsing anythi
     3  timeout      no verdict arrived in time
     4  no session   jiro:dev is not running, or has not written a status file yet
 
-The --since guard is the point of the tool. status.json always holds *some* verdict, and reading
+The freshness guard is the point of the tool. status.json always holds *some* verdict, and reading
 it immediately after an edit otherwise returns the previous cycle's answer, which is how an agent
-convinces itself that code it has just broken still works.
+convinces itself that code it has just broken still works. Two guards are available:
+
+    --since-now      require a verdict covering the newest .java file on disk
+    --after-cycle N  require cycleId > N, where N came from the previous read
+
+--after-cycle is the stronger of the two and the better fit for a scripted loop: cycleId is a
+counter jiro owns, so it needs no clock and cannot be confused by filesystem timestamp resolution
+or by an editor writing an mtime in the past. Read cycleId from the verdict you get, pass it to the
+next call.
+
+Deleting status.json between reads is not needed and is weaker than either guard: jiro replaces the
+file every cycle rather than appending to it, so it never grows, and the mere reappearance of the
+file does not prove the new verdict covers *your* edit — a cycle triggered by something else would
+also recreate it. Deleting it is nonetheless safe if you prefer to: the writer holds no handle, and
+the next cycle writes a fresh one.
 """
 
 import argparse
@@ -60,6 +74,8 @@ def main():
                         help="require a verdict covering sources modified at or after this epoch-ms")
     parser.add_argument("--since-now", action="store_true",
                         help="require a verdict covering the newest .java file on disk right now")
+    parser.add_argument("--after-cycle", type=int, default=None,
+                        help="require cycleId greater than this (from a previous verdict)")
     parser.add_argument("--src", action="append", default=None,
                         help="source root for --since-now (repeatable; default: src)")
     parser.add_argument("--timeout", type=float, default=30.0, help="seconds to wait")
@@ -79,6 +95,8 @@ def main():
         if status is not None:
             last = status
             fresh = since is None or status.get("inputWatermarkMillis", 0) >= since - 1
+            if arguments.after_cycle is not None:
+                fresh = fresh and status.get("cycleId", -1) > arguments.after_cycle
             if status.get("terminal") and fresh:
                 if not arguments.quiet:
                     json.dump(status, sys.stdout, indent=2)

@@ -5,6 +5,7 @@ import io.github.eegn.jiro.core.analyze.ClassFingerprint;
 import io.github.eegn.jiro.core.analyze.FingerprintStore;
 import io.github.eegn.jiro.core.analyze.Fingerprinter;
 import io.github.eegn.jiro.core.compile.CompilationResult;
+import io.github.eegn.jiro.core.compile.CompileError;
 import io.github.eegn.jiro.core.compile.IncrementalCompiler;
 import io.github.eegn.jiro.core.report.CycleReport;
 import io.github.eegn.jiro.core.report.JsonReporter;
@@ -231,17 +232,22 @@ public class DevMojo extends AbstractMojo {
         }
 
         long startedAt = System.nanoTime();
-        List<String> errors = new ArrayList<>();
+        List<CompileError> errors = new ArrayList<>();
         CompilationResult main = compiler.compile(mainSources);
-        errors.addAll(main.diagnostics());
+        errors.addAll(main.errors());
         if (main.successful()) {
             CompilationResult tests = testCompiler.compile(testSources);
-            errors.addAll(tests.diagnostics());
+            errors.addAll(tests.errors());
         }
         if (!errors.isEmpty()) {
             reporter.publish(report.compileFailed(errors));
             getLog().error("[jiro] compilation failed");
-            errors.forEach(error -> getLog().error("  " + error));
+            for (CompileError error : errors) {
+                getLog().error("  " + error.describe());
+                if (error.sourceLine() != null) {
+                    getLog().error("      " + error.sourceLine());
+                }
+            }
             return discovered;
         }
         long compileMillis = (System.nanoTime() - startedAt) / 1_000_000;
@@ -308,12 +314,16 @@ public class DevMojo extends AbstractMojo {
         for (ForkedRunner.TestResult result : run.results()) {
             if (!result.passed()) {
                 failures.add(new CycleReport.FailedTest(
-                        result.uniqueId(), shortName(result.uniqueId()),
-                        result.failure() == null ? result.status() : result.failure()));
+                        result.uniqueId(),
+                        shortName(result.uniqueId()),
+                        result.failureType() == null ? result.status() : result.failureType(),
+                        result.failureMessage() == null ? "" : result.failureMessage(),
+                        result.trace()));
             }
         }
         for (String error : run.errors()) {
-            failures.add(new CycleReport.FailedTest("<runner>", "<runner>", error));
+            failures.add(new CycleReport.FailedTest(
+                    "<runner>", "<runner>", "RunnerError", error, List.of()));
         }
         int passed = run.results().size() - (int) run.failures();
         reporter.publish(report.finished(reason, run.results().size(), passed, failures));
@@ -330,8 +340,7 @@ public class DevMojo extends AbstractMojo {
         getLog().error(summary);
         for (ForkedRunner.TestResult result : run.results()) {
             if (!result.passed()) {
-                getLog().error("  " + shortName(result.uniqueId())
-                        + (result.failure() == null ? "" : ": " + result.failure()));
+                getLog().error("  " + shortName(result.uniqueId()) + "  " + result.summary());
             }
         }
     }

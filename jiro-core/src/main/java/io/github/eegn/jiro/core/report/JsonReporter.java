@@ -1,5 +1,6 @@
 package io.github.eegn.jiro.core.report;
 
+import io.github.eegn.jiro.core.compile.CompileError;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -21,12 +22,16 @@ import java.util.List;
  * handshake, and works identically from a hook, a script or a person.
  *
  * <p>{@code status.json} is written to a temporary file and moved into place, so a reader polling
- * in a tight loop can never observe a half-written document.
+ * in a tight loop can never observe a half-written document. It is replaced, never appended to, so
+ * it does not grow; the event log does, and is rotated at {@value #MAX_EVENT_LOG_BYTES} bytes.
  *
  * <p>JSON is emitted by hand: jiro-core is on the plugin's classpath inside Maven, and adding a
  * serialisation library there buys nothing for the handful of fields involved.
  */
 public final class JsonReporter {
+
+    /** Rotation threshold for the append-only event log. */
+    private static final long MAX_EVENT_LOG_BYTES = 4L * 1024 * 1024;
 
     private final Path statusFile;
     private final Path eventsFile;
@@ -54,10 +59,22 @@ public final class JsonReporter {
         }
 
         if (report.state().isTerminal()) {
+            rotateEventsIfLarge();
             // Compact, because the contract of .ndjson is one object per line. Appending the
             // indented form produced a file that no line-oriented reader could parse.
             Files.writeString(eventsFile, toJson(report, false) + System.lineSeparator(),
                     StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        }
+    }
+
+    /**
+     * Keeps the append-only log from growing without bound over a long session. One previous
+     * generation is kept; anything older is of no use to a dev loop.
+     */
+    private void rotateEventsIfLarge() throws IOException {
+        if (Files.exists(eventsFile) && Files.size(eventsFile) > MAX_EVENT_LOG_BYTES) {
+            Files.move(eventsFile, eventsFile.resolveSibling("events.ndjson.1"),
+                    StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
@@ -85,7 +102,8 @@ public final class JsonReporter {
         appendField(json, indent, space, newline, "selectedTests", String.valueOf(report.selectedTests()));
         appendField(json, indent, space, newline, "passed", String.valueOf(report.passed()));
         appendField(json, indent, space, newline, "failed", String.valueOf(report.failures().size()));
-        appendField(json, indent, space, newline, "compileErrors", stringArray(report.compileErrors()));
+        appendField(json, indent, space, newline, "compileErrors",
+                compileErrorArray(report.compileErrors(), indent, space, newline));
 
         json.append(indent).append("\"failures\":").append(space).append('[');
         List<CycleReport.FailedTest> failures = report.failures();
@@ -98,8 +116,12 @@ public final class JsonReporter {
                     .append("{\"uniqueId\":").append(space).append(quote(failure.uniqueId()))
                     .append(",").append(space).append("\"displayName\":").append(space)
                     .append(quote(failure.displayName()))
+                    .append(",").append(space).append("\"type\":").append(space)
+                    .append(quote(failure.type()))
                     .append(",").append(space).append("\"message\":").append(space)
-                    .append(quote(failure.message())).append('}');
+                    .append(quote(failure.message()))
+                    .append(",").append(space).append("\"trace\":").append(space)
+                    .append(stringArray(failure.trace())).append('}');
         }
         if (!failures.isEmpty()) {
             json.append(newline).append(indent);
@@ -107,6 +129,28 @@ public final class JsonReporter {
         json.append(']').append(newline);
         json.append('}');
         return json.toString();
+    }
+
+    private static String compileErrorArray(List<CompileError> errors, String indent, String space,
+                                            String newline) {
+        StringBuilder array = new StringBuilder("[");
+        for (int i = 0; i < errors.size(); i++) {
+            CompileError error = errors.get(i);
+            if (i > 0) {
+                array.append(',');
+            }
+            array.append(newline).append(indent).append(indent)
+                    .append("{\"file\":").append(space).append(quote(error.file()))
+                    .append(",").append(space).append("\"line\":").append(space).append(error.line())
+                    .append(",").append(space).append("\"column\":").append(space).append(error.column())
+                    .append(",").append(space).append("\"message\":").append(space).append(quote(error.message()))
+                    .append(",").append(space).append("\"sourceLine\":").append(space).append(quote(error.sourceLine()))
+                    .append('}');
+        }
+        if (!errors.isEmpty()) {
+            array.append(newline).append(indent);
+        }
+        return array.append(']').toString();
     }
 
     private static void appendField(StringBuilder json, String indent, String space,

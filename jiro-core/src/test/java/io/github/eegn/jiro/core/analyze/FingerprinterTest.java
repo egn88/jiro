@@ -142,7 +142,7 @@ class FingerprinterTest {
         try (var files = Files.list(sources)) {
             CompilationResult result = new IncrementalCompiler(List.of(classes), classes, List.of())
                     .compile(files.toList());
-            assertTrue(result.successful(), "fixture must compile: " + result.diagnostics());
+            assertTrue(result.successful(), "fixture must compile: " + result.errors());
         }
     }
 
