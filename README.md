@@ -12,15 +12,61 @@ From then on, saving a `.java` file recompiles only that file and runs only the 
 change can actually affect — usually a handful, usually in well under a second.
 
 ```
-[jiro] watching 42 directories, status at target/jiro/status.json
+[jiro] watching 51 directories, status at target/jiro/status.json
 [jiro] building coverage baseline, running the full suite once
-[jiro] baseline complete: 318 tests, 2841 methods indexed
-[jiro] compiled in 47ms, ran 3 test(s), 0 failed — 1 method(s), 0 ABI change(s), 0 added, 0 removed
-[jiro] compiled in 41ms, no tests to run (no observable change)
+[jiro] baseline complete: 156 tests, 1782 methods indexed
+[jiro] compiled in 314ms, ran 9 test(s), 0 failed — 1 method(s), 0 ABI change(s), 0 added, 0 removed
+[jiro] compiled in 903ms, no tests to run (no observable change)
 ```
 
 That second-to-last line is the normal case. The last one is a comment-only edit: jiro compares
 normalised bytecode, so reformatting, renaming a local or moving a method selects nothing at all.
+
+## Getting started
+
+Needs a JDK 17 or later — a JDK, not a JRE, because jiro compiles in-process — Maven 3.9+, and
+JUnit 5 (JUnit 4 works through the vintage engine).
+
+jiro is not on Maven Central yet, so install it into your local repository first:
+
+```
+git clone git@github.com:egn88/jiro.git
+cd jiro
+mvn install
+```
+
+Then, in the project you want to work on, either declare the plugin:
+
+```xml
+<plugin>
+  <groupId>io.github.eegn.jiro</groupId>
+  <artifactId>jiro-maven-plugin</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+</plugin>
+```
+
+or invoke it without touching the pom at all:
+
+```
+mvn io.github.eegn.jiro:jiro-maven-plugin:0.1.0-SNAPSHOT:dev
+```
+
+To get the short `mvn jiro:dev` form in any project, add the group once to `~/.m2/settings.xml`:
+
+```xml
+<pluginGroups>
+  <pluginGroup>io.github.eegn.jiro</pluginGroup>
+</pluginGroups>
+```
+
+Build the project once before starting. jiro seeds its baseline from whatever bytecode is already
+in `target/classes`, so if that does not match your sources the first few cycles will diff against
+the wrong thing:
+
+```
+mvn test-compile
+mvn jiro:dev
+```
 
 ## Why this exists
 
@@ -142,12 +188,6 @@ tenth), but a thirty-second container start does not belong in a loop whose sell
 sub-second feedback. Treat integration tests as something to opt into deliberately, not as the
 default mode.
 
-## Requirements
-
-- JDK 17 or later (a JDK, not a JRE: jiro compiles in-process)
-- Maven 3.9+
-- JUnit 5 (JUnit 4 works through the vintage engine)
-
 ## Status
 
 Early, but it works. Validated end to end against two real Spring Boot codebases:
@@ -161,6 +201,6 @@ On `service-a` the baseline reproduces `mvn test` exactly: 154 passed and one pr
 failure, in both. Breaking an asserted value turned the loop red in a second, having run 9 of 156
 tests. On `service-b` a regression was found by running **2 of 960** tests.
 
-Five bugs surfaced in the first hour against real code — including one that made JUnit Jupiter
-silently discover zero tests, and one that made a comment-only edit look like 26 changed classes.
-All five are fixed and written up in [DESIGN.md](DESIGN.md), along with what is still unfinished.
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).

@@ -19,11 +19,13 @@ Over-selection costs time. Under-selection tells a developer their broken code p
 to `TestSelector`, `Fingerprinter` or `ClassFirewall` must say which direction it errs in, and it
 must err toward running too much.
 
-## Using jiro on jiro
+## Verifying a change
 
-Once jiro can build itself, `mvn jiro:dev` in a fixture project is the real test. Until then,
-changes to the agent or runner need a manual end-to-end check — unit tests on `Fingerprinter` and
-`TestSelector` cannot catch a broken probe.
+Unit tests cover `Fingerprinter`, `TestSelector` and `JsonReporter`. They cannot catch a broken
+probe, a classloader mistake or a protocol change, so anything touching the agent, the runner or
+the fork needs a manual end-to-end run against a real Spring Boot project: start `jiro:dev`, make a
+comment-only edit (expect zero tests), then break an asserted value (expect red, with the failing
+assertion's file and line in `status.json`).
 
 ## Agent workflow in a repo running jiro
 

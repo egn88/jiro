@@ -11,6 +11,15 @@
 
   <name>jiro</name>
   <description>Continuous, method-level test impact analysis for Maven projects</description>
+  <url>https://github.com/egn88/jiro</url>
+
+  <licenses>
+    <license>
+      <name>The Apache License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
 
   <modules>
     <module>jiro-runtime</module>
