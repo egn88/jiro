@@ -6,7 +6,7 @@
 
   <groupId>io.github.egn88</groupId>
   <artifactId>jiro-parent</artifactId>
-  <version>0.0.1</version>
+  <version>0.0.2-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <name>jiro</name>
