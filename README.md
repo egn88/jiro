@@ -39,23 +39,23 @@ Then, in the project you want to work on, either declare the plugin:
 
 ```xml
 <plugin>
-  <groupId>io.github.eegn.jiro</groupId>
+  <groupId>io.github.egn88</groupId>
   <artifactId>jiro-maven-plugin</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.0.1</version>
 </plugin>
 ```
 
 or invoke it without touching the pom at all:
 
 ```
-mvn io.github.eegn.jiro:jiro-maven-plugin:0.1.0-SNAPSHOT:dev
+mvn io.github.egn88:jiro-maven-plugin:0.0.1:dev
 ```
 
 To get the short `mvn jiro:dev` form in any project, add the group once to `~/.m2/settings.xml`:
 
 ```xml
 <pluginGroups>
-  <pluginGroup>io.github.eegn.jiro</pluginGroup>
+  <pluginGroup>io.github.egn88</pluginGroup>
 </pluginGroups>
 ```
 
