@@ -129,6 +129,7 @@ public final class RewriteService implements Function<Map<String, Object>, Map<S
 
             String op = String.valueOf(request.getOrDefault("op", "run"));
             if ("warm".equals(op)) {
+                warmRecipes(synced.trees, ctx);
                 response.put("ok", true);
                 response.put("changedFiles", List.of());
                 response.put("deletedFiles", List.of());
@@ -295,6 +296,44 @@ public final class RewriteService implements Function<Map<String, Object>, Map<S
             sourceSets.put("test", JavaSourceSet.build("test", testClasspath));
         }
         return sourceSets;
+    }
+
+    /**
+     * Runs the common refactoring recipes once over every tree, aimed at names that cannot exist,
+     * and throws the (empty) result away. Parsing is only half of a cold first request; the other
+     * half is loading and interpreting the recipe and visitor classes, and that is what this pays
+     * for in advance. Nothing is written.
+     */
+    private static final String WARM_RECIPE = String.join("\n",
+            "type: specs.openrewrite.org/v1beta/recipe",
+            "name: jiro.Warm",
+            "recipeList:",
+            "  - org.openrewrite.java.ChangeType:",
+            "      oldFullyQualifiedTypeName: jiro.warm.Absent",
+            "      newFullyQualifiedTypeName: jiro.warm.Absent2",
+            "      ignoreDefinition: false",
+            "  - org.openrewrite.java.ChangeMethodName:",
+            "      methodPattern: jiro.warm.Absent absent(..)",
+            "      newMethodName: absent2",
+            "      matchOverrides: true",
+            "  - org.openrewrite.java.ChangePackage:",
+            "      oldPackageName: jiro.warm.absent",
+            "      newPackageName: jiro.warm.absent2",
+            "      recursive: true",
+            "  - org.openrewrite.java.AddOrUpdateAnnotationAttribute:",
+            "      annotationType: jiro.warm.Absent",
+            "      attributeName: name",
+            "      attributeValue: b",
+            "      oldAttributeValue: a",
+            "");
+
+    private void warmRecipes(List<SourceFile> trees, ExecutionContext ctx) {
+        Environment environment = Environment.builder()
+                .load(new YamlResourceLoader(
+                        new ByteArrayInputStream(WARM_RECIPE.getBytes(StandardCharsets.UTF_8)),
+                        URI.create("jiro:warm"), new Properties(), RewriteService.class.getClassLoader()))
+                .build();
+        environment.activateRecipes("jiro.Warm").run(new InMemoryLargeSourceSet(trees), ctx);
     }
 
     private void run(Map<String, Object> request, List<SourceFile> trees, ExecutionContext ctx,

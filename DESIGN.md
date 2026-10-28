@@ -230,6 +230,74 @@ module, and generated-source staleness has not been thought through.
 that the current one depends on is invisible. Real projects are multi-module, so this matters, and
 it is probably the largest missing feature rather than a sharp edge.
 
+## Rewrite service
+
+`jiro:dev` can also run OpenRewrite recipes, so a refactoring tool (Nisperi's renames, an agent)
+gets OpenRewrite without starting Maven and re-parsing the project on every call.
+
+**Isolation.** `jiro-rewrite` is never on the plugin's classpath. On the first request the mojo
+resolves `io.github.egn88:jiro-rewrite:<plugin version>` and its dependencies through Maven's own
+resolver. It loads them in a `URLClassLoader` whose parent is the *platform* loader, so
+OpenRewrite's Jackson, javac bridge and other libraries never meet Maven's or jiro's. The only
+contract is `Function<Map<String, Object>, Map<String, Object>>`, which uses `java.base` types on
+both sides. A session that never rewrites pays only one directory listing every 40ms. The Java
+parser is the one for the JDK Maven runs on. jiro compiles in-process, so that is already the
+project's JDK.
+
+**LST cache.** The first request parses main and test sources in one javac batch against the test
+classpath, which includes `target/classes`. Trees are kept per path with their size and mtime,
+through soft references: under heap pressure the collector drops trees and they are reparsed. A
+dropped tree is never served stale. Each request reparses:
+
+- new or modified files
+- trees the collector reclaimed
+- the *dependents* of every modified or deleted file: files in the same package, files whose
+  types-in-use name a type it declared, and files with an unresolved import
+
+Dependents go into the same batch as the files they depend on. Their type attribution therefore
+comes from the new source, not from a class file jiro may not have recompiled yet. This errs
+toward reparsing too much.
+
+Results are written the way rewrite-maven-plugin's `run` goal writes them, including moves,
+deletes and directories a move emptied. They carry the same `Autodetect` style and `JavaSourceSet`
+markers. The written trees replace the cached ones, so the next request reparses nothing it wrote
+itself. Parsing holds the compile lock, so it never reads a half-written class file. rewrite is
+pinned to 8.86.0, the version rewrite-maven-plugin 6.43.0 uses, so both paths produce the same
+diff.
+
+**Protocol.** It follows the same principle as `status.json`. `target/jiro/session.json` carries
+the Maven pid; `status.json` outlives its session, so it cannot prove liveness.
+
+1. The client writes `rewrite/requests/<id>.yml` as a temp file plus a rename. The file is a
+   declarative recipe, with a `# jiro-recipe: <name>` comment naming the recipe to run.
+2. jiro claims the request with an atomic move into `processing/`, runs it and writes the files.
+3. jiro publishes `rewrite/responses/<id>.json` atomically: `{id, ok, recipe, changedFiles,
+   deletedFiles, warnings, error?, millis, parseMillis, runMillis, reparsedFiles, totalFiles}`.
+
+The claim makes timeouts safe. A client that gives up deletes its request; if the delete succeeds,
+jiro never claimed it and another tool may run the recipe. The written files then go through the
+normal cycle: compile, select, run. `bin/jiro-rewrite` is the shell client (exit codes: 0 ok,
+1 error, 3 timeout, 4 no session).
+
+**Pre-warm** (`-Djiro.rewrite.prewarm=true`, off by default) loads the service after the baseline
+and parses everything. It also runs the common refactoring recipes once against names that cannot
+exist. It is off by default because it costs seconds of CPU and a few hundred MB of RSS in
+sessions that never rewrite.
+
+Measured on a generated Spring Boot 4.1 / Java 25 service with 31 sources. The rename was an
+entity, a field and a relation at once:
+
+| path | time per rename |
+|---|---|
+| rewrite-maven-plugin via `mvn` | 13–18s |
+| jiro, first rename, cold | 7.7s |
+| jiro, first rename, after a parse-only pre-warm | 4.1s |
+| jiro, warm | 0.34–0.58s (0.43–0.66s end to end through Nisperi's MCP, regeneration included) |
+| jiro, request with nothing to reparse | 14ms |
+
+The Maven JVM's RSS was 230MB before the first request and about 650–840MB with the cache. The
+resulting files were byte-identical to the Maven plugin's.
+
 ## Roadmap
 
 1. Read the project's Surefire configuration — includes, excludes and system properties — rather
@@ -240,7 +308,9 @@ it is probably the largest missing feature rather than a sharp edge.
 5. A periodic fork restart, to bound static-state drift over a long session.
 6. Detect a `target/classes` that does not match the source tree at startup.
 7. An MCP server wrapping the index — `jiro_status`, `jiro_failures`, `jiro_impact_of(file)` — so an
-   agent can ask "what would change if I touched this?" before editing rather than after.
+   agent can ask "what would change if I touched this?" before editing rather than after. The
+   rewrite service is a first step: the session already answers refactoring requests over files,
+   and an MCP front end could expose both the index and the rewrites with no JVM start.
 8. Probe optimisation: a static `boolean[]` field per class resolved once in `<clinit>`, replacing
    the static call per method entry.
 

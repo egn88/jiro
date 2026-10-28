@@ -170,6 +170,20 @@ you prefer: the writer holds no handle on it.
 `target/jiro/events.ndjson` keeps one line per completed cycle, rotated at 4MB, and
 `target/jiro/coverage.index` is plain text — grep it to find out which tests cover a given method.
 
+### Refactoring through the running session
+
+`jiro:dev` also runs OpenRewrite recipes against sources it keeps parsed in memory. A rename takes
+a fraction of a second instead of a Maven start:
+
+```
+bin/jiro-rewrite rename.yml com.acme.RenameCustomer   # 0 ok, 1 error, 3 timeout, 4 no session
+bin/jiro-await --since-now                             # verdict on the rewritten code
+```
+
+jiro writes the changed files itself, then compiles them and runs the affected tests as usual.
+OpenRewrite is loaded in an isolated classloader, on first use only. `-Djiro.rewrite.prewarm=true`
+loads it after the baseline so the first rename is fast too. See DESIGN.md, "Rewrite service".
+
 ## Integration tests
 
 By default jiro runs what `mvn test` runs: Surefire's default class-name patterns, which exclude the
