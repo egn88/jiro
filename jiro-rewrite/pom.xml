@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.github.egn88</groupId>
+    <artifactId>jiro-parent</artifactId>
+    <version>0.0.2-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>jiro-rewrite</artifactId>
+  <name>jiro :: rewrite</name>
+  <description>
+    OpenRewrite recipes against an in-memory LST cache that stays warm for the whole session.
+    Never on the plugin's classpath: jiro:dev resolves this artifact and its dependencies on first
+    use and loads them in an isolated classloader whose parent is the platform loader.
+  </description>
+
+  <properties>
+    <!-- Same rewrite as rewrite-maven-plugin 6.43.0, so a recipe produces the same diff by either path. -->
+    <rewrite.version>8.86.0</rewrite.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.openrewrite</groupId>
+        <artifactId>rewrite-bom</artifactId>
+        <version>${rewrite.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <!-- Nothing from jiro itself: the only contract with the plugin is
+       java.util.function.Function<Map<String, Object>, Map<String, Object>>, which both loaders
+       see from java.base. -->
+  <dependencies>
+    <dependency>
+      <groupId>org.openrewrite</groupId>
+      <artifactId>rewrite-java</artifactId>
+    </dependency>
+    <!-- JavaParser.fromJavaVersion() picks the parser matching the JDK Maven runs on. -->
+    <dependency>
+      <groupId>org.openrewrite</groupId>
+      <artifactId>rewrite-java-17</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.openrewrite</groupId>
+      <artifactId>rewrite-java-21</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.openrewrite</groupId>
+      <artifactId>rewrite-java-25</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

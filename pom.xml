@@ -26,6 +26,7 @@
     <module>jiro-agent</module>
     <module>jiro-core</module>
     <module>jiro-runner</module>
+    <module>jiro-rewrite</module>
     <module>jiro-maven-plugin</module>
   </modules>
 
@@ -33,7 +34,7 @@
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-    <asm.version>9.7.1</asm.version>
+    <asm.version>9.10.1</asm.version>
     <junit.platform.version>1.11.4</junit.platform.version>
     <junit.jupiter.version>5.11.4</junit.jupiter.version>
     <maven.api.version>3.9.9</maven.api.version>

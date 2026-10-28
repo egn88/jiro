@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""
+Run an OpenRewrite declarative recipe through the running `mvn jiro:dev` session, which keeps the
+project parsed in memory, then print jiro's response as JSON.
+
+    bin/jiro-rewrite rename.yml com.acme.RenameCustomer --timeout 120
+
+jiro writes the changed files itself; its own watcher then recompiles them and runs the affected
+tests as usual, so follow up with `bin/jiro-await --since-now` for the verdict.
+
+Exit codes:
+
+    0  ok           the recipe ran; changedFiles lists what was written (possibly nothing)
+    1  error        the recipe was rejected or failed; nothing was written
+    3  timeout      no response in time (see below)
+    4  no session   jiro:dev is not running here, or runs with the rewrite endpoint disabled
+
+The session check reads target/jiro/session.json and requires its pid to be alive; status.json
+cannot be used for this because it outlives the session that wrote it.
+
+On timeout the request is withdrawn if jiro has not claimed it yet, in which case nothing will
+ever be written and running the recipe some other way is safe. If jiro had already claimed it the
+response will still arrive in responses/<id>.json, and the message says so: do not run the recipe
+again elsewhere.
+"""
+
+import argparse
+import json
+import os
+import sys
+import time
+import uuid
+
+DEFAULT_STATE = os.path.join("target", "jiro")
+
+
+def live_session(state):
+    try:
+        with open(os.path.join(state, "session.json"), "r", encoding="utf-8") as handle:
+            session = json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError, PermissionError):
+        return None
+    pid = session.get("pid")
+    try:
+        os.kill(int(pid), 0)
+    except (TypeError, ValueError, ProcessLookupError):
+        return None
+    except PermissionError:
+        pass  # alive, owned by someone else
+    return session
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Run a recipe through jiro:dev.")
+    parser.add_argument("recipe_file", help="OpenRewrite declarative recipe YAML")
+    parser.add_argument("recipe_name", nargs="?", default=None,
+                        help="recipe to activate (optional if the file declares exactly one)")
+    parser.add_argument("--state", default=DEFAULT_STATE,
+                        help="jiro state directory (default: %(default)s)")
+    parser.add_argument("--timeout", type=float, default=120.0,
+                        help="seconds to wait; the first request parses the whole project")
+    parser.add_argument("--poll", type=float, default=0.02, help="poll interval in seconds")
+    parser.add_argument("--quiet", action="store_true", help="exit code only, no output")
+    arguments = parser.parse_args()
+
+    session = live_session(arguments.state)
+    if session is None or not session.get("rewrite"):
+        if not arguments.quiet:
+            sys.stderr.write("No live jiro:dev session with the rewrite endpoint at %s.\n"
+                             % arguments.state)
+        return 4
+    requests = session["rewrite"]["requests"]
+    responses = session["rewrite"]["responses"]
+
+    with open(arguments.recipe_file, "r", encoding="utf-8") as handle:
+        recipe = handle.read()
+    if arguments.recipe_name:
+        recipe = "# jiro-recipe: %s\n%s" % (arguments.recipe_name, recipe)
+
+    request_id = "%d-%s" % (int(time.time() * 1000), uuid.uuid4().hex[:8])
+    request = os.path.join(requests, request_id + ".yml")
+    temporary = os.path.join(requests, request_id + ".yml.tmp")
+    with open(temporary, "w", encoding="utf-8") as handle:
+        handle.write(recipe)
+    os.replace(temporary, request)
+
+    response_file = os.path.join(responses, request_id + ".json")
+    deadline = time.time() + arguments.timeout
+    while time.time() < deadline:
+        try:
+            with open(response_file, "r", encoding="utf-8") as handle:
+                response = json.load(handle)
+        except (FileNotFoundError, json.JSONDecodeError):
+            time.sleep(arguments.poll)
+            continue
+        try:
+            os.remove(response_file)
+        except OSError:
+            pass
+        if not arguments.quiet:
+            json.dump(response, sys.stdout, indent=2)
+            sys.stdout.write("\n")
+        return 0 if response.get("ok") else 1
+
+    try:
+        os.remove(request)
+        withdrawn = True
+    except FileNotFoundError:
+        withdrawn = False
+    if not arguments.quiet:
+        if withdrawn:
+            sys.stderr.write("Timed out; the request was withdrawn before jiro claimed it.\n")
+        else:
+            sys.stderr.write("Timed out, but jiro is already applying the recipe; its answer will "
+                             "appear in %s. Do not run the recipe again elsewhere.\n" % response_file)
+    return 3
+
+
+if __name__ == "__main__":
+    sys.exit(main())

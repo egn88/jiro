@@ -67,6 +67,12 @@ public class DevMojo extends AbstractMojo {
     @Parameter(defaultValue = "${project.remoteProjectRepositories}", readonly = true)
     private List<org.eclipse.aether.repository.RemoteRepository> remoteRepositories;
 
+    @Parameter(defaultValue = "${project.remotePluginRepositories}", readonly = true)
+    private List<org.eclipse.aether.repository.RemoteRepository> remotePluginRepositories;
+
+    @Parameter(defaultValue = "${plugin}", readonly = true)
+    private org.apache.maven.plugin.descriptor.PluginDescriptor pluginDescriptor;
+
     /**
      * Package prefixes to instrument. Inferred from the packages present in the output directories
      * when left unset, which is almost always what is wanted: instrumenting dependencies would slow
@@ -105,6 +111,29 @@ public class DevMojo extends AbstractMojo {
      */
     @Parameter(property = "jiro.baselineOnStartup", defaultValue = "true")
     private boolean baselineOnStartup;
+
+    /**
+     * Answer OpenRewrite requests dropped into {@code target/jiro/rewrite/requests}. Costs one
+     * directory listing every few tens of milliseconds until the first request arrives; OpenRewrite
+     * itself is resolved, loaded and run only then.
+     */
+    @Parameter(property = "jiro.rewrite.enabled", defaultValue = "true")
+    private boolean rewriteEnabled;
+
+    /**
+     * Load OpenRewrite and parse the project in the background once the baseline is done, so the
+     * first rewrite is as fast as the later ones. Off by default: it costs a few seconds of CPU and a
+     * few hundred megabytes of heap in sessions that never rewrite anything.
+     */
+    @Parameter(property = "jiro.rewrite.prewarm", defaultValue = "false")
+    private boolean rewritePrewarm;
+
+    /**
+     * Held while javac writes class files and while the rewrite service parses, so a parse never
+     * reads a class file halfway through being written.
+     */
+    private final java.util.concurrent.locks.ReentrantLock compileLock =
+            new java.util.concurrent.locks.ReentrantLock();
 
     @Override
     public void execute() throws MojoExecutionException {
@@ -158,10 +187,18 @@ public class DevMojo extends AbstractMojo {
                 jvmArgs == null ? List.of() : jvmArgs,
                 classNamePattern());
 
+        RewriteEndpoint rewrite = rewriteEnabled ? rewriteEndpoint(state) : null;
+        SessionFile session = new SessionFile(state, rewrite);
+        session.publish();
         try (ForkedRunner runner = new ForkedRunner(options);
-             SourceWatcher watcher = new SourceWatcher(sourceRoots)) {
+             SourceWatcher watcher = new SourceWatcher(sourceRoots);
+             SessionFile ignored = session;
+             AutoCloseable stopRewrite = rewrite == null ? () -> { } : rewrite) {
 
             runner.start();
+            if (rewrite != null) {
+                rewrite.start();
+            }
             getLog().info("[jiro] watching " + watcher.watchedDirectoryCount()
                     + " directories, status at " + reporter.statusFile());
 
@@ -173,6 +210,9 @@ public class DevMojo extends AbstractMojo {
             if (baselineOnStartup || index.isEmpty()) {
                 cycleId++;
                 baseline(runner, index, reporter, state, cycleId);
+            }
+            if (rewrite != null && rewritePrewarm) {
+                rewrite.prewarm();
             }
             List<String> discovered = runner.discover();
 
@@ -190,7 +230,48 @@ public class DevMojo extends AbstractMojo {
                         compiler, testCompiler, classes, testClasses, state,
                         changedSources, cycleId, discovered);
             }
+        } catch (IOException | InterruptedException | MojoExecutionException | RuntimeException rethrown) {
+            throw rethrown;
+        } catch (Exception closing) {
+            throw new IOException(closing);
         }
+    }
+
+    private RewriteEndpoint rewriteEndpoint(Path state) throws IOException, MojoExecutionException {
+        Map<String, Object> config = new java.util.HashMap<>();
+        config.put("baseDir", project.getBasedir().toPath());
+        config.put("mainSourceRoots", ownSourceRoots(project.getCompileSourceRoots()));
+        config.put("testSourceRoots", ownSourceRoots(project.getTestCompileSourceRoots()));
+        try {
+            config.put("compileClasspath",
+                    project.getCompileClasspathElements().stream().distinct().map(Path::of).toList());
+        } catch (org.apache.maven.artifact.DependencyResolutionRequiredException unresolved) {
+            throw new MojoExecutionException("Compile dependencies are not resolved", unresolved);
+        }
+        config.put("testClasspath", testClasspath().stream().distinct().toList());
+        String encoding = project.getProperties().getProperty("project.build.sourceEncoding");
+        if (encoding != null) {
+            config.put("charset", encoding);
+        }
+        config.put("lock", compileLock);
+        java.util.function.Consumer<String> info = getLog()::info;
+        config.put("log", info);
+        String version = pluginDescriptor.getVersion();
+        return new RewriteEndpoint(state,
+                () -> RewriteServiceLoader.load(repositorySystem, repositorySession,
+                        remotePluginRepositories, version, config),
+                info, getLog()::warn);
+    }
+
+    /**
+     * Source roots minus generated ones under the build directory, as rewrite-maven-plugin does:
+     * annotation-processor output is regenerated, not rewritten.
+     */
+    private List<Path> ownSourceRoots(List<String> roots) {
+        Path build = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
+        return existingDirectories(roots.stream().map(Path::of)
+                .filter(root -> !root.toAbsolutePath().normalize().startsWith(build))
+                .toList());
     }
 
     private void baseline(ForkedRunner runner, CoverageIndex index, JsonReporter reporter,
@@ -233,11 +314,16 @@ public class DevMojo extends AbstractMojo {
 
         long startedAt = System.nanoTime();
         List<CompileError> errors = new ArrayList<>();
-        CompilationResult main = compiler.compile(mainSources);
-        errors.addAll(main.errors());
-        if (main.successful()) {
-            CompilationResult tests = testCompiler.compile(testSources);
-            errors.addAll(tests.errors());
+        compileLock.lock();
+        try {
+            CompilationResult main = compiler.compile(mainSources);
+            errors.addAll(main.errors());
+            if (main.successful()) {
+                CompilationResult tests = testCompiler.compile(testSources);
+                errors.addAll(tests.errors());
+            }
+        } finally {
+            compileLock.unlock();
         }
         if (!errors.isEmpty()) {
             reporter.publish(report.compileFailed(errors));
