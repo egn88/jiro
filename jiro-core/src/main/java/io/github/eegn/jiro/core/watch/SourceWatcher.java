@@ -80,10 +80,17 @@ public final class SourceWatcher implements AutoCloseable {
             }
             Path changed = directory.resolve((Path) event.context());
             if (kind == StandardWatchEventKinds.ENTRY_CREATE && Files.isDirectory(changed)) {
-                // A new package appeared: start watching it before its files are written.
+                // A new package appeared: start watching it. Files may already have been written
+                // into it before the watch was registered — a tool moving a package does exactly
+                // that, in microseconds — and no event will ever arrive for those, so report
+                // whatever is already inside as created.
                 try {
                     registerRecursively(changed);
-                } catch (IOException ignored) {
+                    try (java.util.stream.Stream<Path> existing = Files.walk(changed)) {
+                        existing.filter(Files::isRegularFile).forEach(file ->
+                                batch.put(file, new FileChange(file, FileChange.Kind.CREATED)));
+                    }
+                } catch (IOException | java.io.UncheckedIOException ignored) {
                     // Losing a new directory only costs a missed cycle, not correctness of the run.
                 }
             }
