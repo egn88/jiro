@@ -242,15 +242,14 @@ public class DevMojo extends AbstractMojo {
             ResumeState stored = null;
             ResumeCheck.Decision decision;
             long startedAt = System.nanoTime();
-            if (baselineOnStartup) {
-                decision = new ResumeCheck.Decision(false, "jiro.baselineOnStartup=true", Set.of());
-            } else {
-                try {
-                    stored = resumeStore.load();
-                    decision = null;
-                } catch (ResumeStore.Unusable unusable) {
-                    decision = new ResumeCheck.Decision(false, unusable.getMessage(), Set.of());
-                }
+            try {
+                // Loaded even when a baseline is forced: it still supplies cached jar digests.
+                stored = resumeStore.load();
+                decision = baselineOnStartup
+                        ? new ResumeCheck.Decision(false, "jiro.baselineOnStartup=true", Set.of())
+                        : null;
+            } catch (ResumeStore.Unusable unusable) {
+                decision = new ResumeCheck.Decision(false, unusable.getMessage(), Set.of());
             }
             classpathEntries = Inputs.classpath(dependencyClasspath(classpath, classes, testClasses),
                     stored == null ? List.of() : stored.classpath());
@@ -276,7 +275,7 @@ public class DevMojo extends AbstractMojo {
                 List<Path> changedWhileStopped = decision.changedSources().stream()
                         .map(baseDir::resolve)
                         .toList();
-                cycleId = stored.lastCycleId() + 1;
+                cycleId = Math.max(stored.lastCycleId(), previousCycleId(reporter.statusFile())) + 1;
                 discovered = cycle(runner, reporter, fingerprinter, fingerprints, selector, index,
                         compiler, testCompiler, classes, testClasses, state,
                         changedWhileStopped, cycleId, List.of());
@@ -289,7 +288,10 @@ public class DevMojo extends AbstractMojo {
                 // against nothing, which would report every class as added.
                 fingerprints.update(scan(fingerprinter, classes, testClasses));
                 compiledSources.putAll(sourcesNow);
-                cycleId = stored == null ? 1 : stored.lastCycleId() + 1;
+                // cycleId keeps increasing across restarts, so a reader holding --after-cycle N
+                // from the previous session cannot mistake an old verdict for a new one.
+                cycleId = Math.max(stored == null ? 0 : stored.lastCycleId(),
+                        previousCycleId(reporter.statusFile())) + 1;
                 baseline(runner, index, reporter, state, cycleId);
                 if (rewrite != null && rewritePrewarm) {
                     rewrite.prewarm();
@@ -644,6 +646,18 @@ public class DevMojo extends AbstractMojo {
         environment.put("jiro.jvmArgs", String.join("\u0001", options.jvmArguments()));
         environment.put("jiro.testClassPattern", options.classNamePattern());
         return environment;
+    }
+
+    /** The cycleId of the verdict a previous session left in status.json, or 0. */
+    private static long previousCycleId(Path statusFile) {
+        try {
+            java.util.regex.Matcher matcher = java.util.regex.Pattern
+                    .compile("\"cycleId\"\\s*:\\s*(\\d+)")
+                    .matcher(Files.readString(statusFile));
+            return matcher.find() ? Long.parseLong(matcher.group(1)) : 0;
+        } catch (IOException | RuntimeException absent) {
+            return 0;
+        }
     }
 
     /** The test classpath without the project's own output directories, which are fingerprinted. */
