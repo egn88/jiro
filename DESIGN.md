@@ -200,7 +200,10 @@ is the fix.
 whatever bytecode is already in the output directory at startup. If that does not match the source
 tree — a killed session, a `git checkout` made while jiro was down — the first edits diff against
 the wrong baseline and report nonsense, and the startup baseline run tests code that is not what is
-on disk. Running `mvn test-compile` before `jiro:dev` avoids it; jiro should detect the skew itself.
+on disk. Running `mvn test-compile` before `jiro:dev` avoids it; jiro should detect the skew itself. A
+*resumed* session does not have this problem for edits made while it was stopped, because it
+compares source digests with the persisted ones. It still inherits any skew that was present when
+the first baseline ran.
 
 **Failsafe and Surefire configuration is not inherited.** `argLine`, `systemPropertyVariables` and
 the active Spring profile have to be passed by hand through `jiro.jvmArgs`. For unit tests this
@@ -298,13 +301,91 @@ entity, a field and a relation at once:
 The Maven JVM's RSS was 230MB before the first request and about 650–840MB with the cache. The
 resulting files were byte-identical to the Maven plugin's.
 
+## Resuming a session
+
+`jiro:dev` persists enough state to restart without a baseline. That matters for ephemeral
+environments, where every start used to rerun the whole suite (14–35s on the projects measured
+below). `target/jiro/` holds two files written together after every cycle that completes:
+
+- `coverage.index`: as before, now sorted and replaced atomically.
+- `resume.state`: versioned (`jiro-resume-state 1`), tab-separated text ending in a SHA-256 of
+  everything above it, replaced atomically. It records the class fingerprints (method bodies and
+  ABI digests), the digest of every source the class files were compiled from, the digest of the
+  `coverage.index` written with it, the dependency classpath, the resources in the output
+  directories, the tests that were failing, the last `cycleId`, and an environment block.
+
+The state describes one instant: the end of the last cycle whose selected tests all reported. A
+change made after that instant is a difference against it. It does not matter whether jiro saw the
+change or was stopped at the time.
+
+**The check at startup.** jiro resumes only when every one of these holds. Otherwise it runs the
+full baseline and logs why:
+
+| must match | why |
+|---|---|
+| format version and checksum | a file that cannot be read completely proves nothing |
+| `jiro.build`: SHA-256 of jiro's own jars, plus the version | a rebuilt snapshot may fingerprint or instrument differently |
+| JDK: `java.version`, `java.runtime.version`, vendor, VM | bytecode and behaviour are the JDK's |
+| instrumented packages, `jiro.jvmArgs`, test class patterns | they change what is recorded and what is discovered |
+| every dependency jar's content, in classpath order | a library change can alter behaviour no fingerprint sees |
+| every non-class file in `target/classes` and `target/test-classes` | jiro cannot attribute an `application.yml` change to tests |
+| the `coverage.index` digest | the index must be the one written with this state |
+| no source deleted since | its class files remain on the classpath and nothing removes them |
+
+Jar digests are content hashes. Path, size and mtime only key a cache, so an environment that
+restores `~/.m2` at another path or with fresh timestamps re-hashes once and still resumes.
+
+**What changed while jiro was stopped is not trusted.** Sources whose digest differs from the
+stored one, or that are new, are recompiled before anything runs. The fresh scan of the output
+directories is then diffed against the *persisted* fingerprints. Edited bodies, ABI changes and
+bytecode rewritten by an outside `mvn compile` therefore reach the selector exactly as an edit
+would in a live session. The first cycle also runs:
+
+- tests the index has never seen (rule 2, after a forced discovery)
+- tests that were red when the session stopped, so a resumed green means the tests were re-checked
+- everything, if a class file vanished while jiro was down
+
+A source that does not compile stays pending and is compiled again with the next edit. Nothing is
+persisted until it compiles.
+
+**Direction of error.** Every rule above errs toward running more. The state is persisted only
+after the cycle's tests have reported, so a session killed mid-run diffs against the older
+fingerprints and selects the same tests again. A selected test that never reported counts as
+failing. A runner error deletes `resume.state`, so the next start runs a baseline. A source digest
+is taken *before* javac reads the file: if the file changes in between, the stored digest is
+older than the bytecode and the next start recompiles it. The opposite skew cannot happen. What
+resuming does not add is a check that `target/classes` matched the sources when the *first*
+baseline ran (roadmap item 6): resuming is as correct as an uninterrupted session, no more.
+
+`-Djiro.baselineOnStartup=true` forces a baseline. It used to default to `true`, and `false`
+reused the index without any check. It now defaults to `false`, which means resume when proven
+consistent. `cycleId` continues across restarts, never numbering below the one in
+`status.json`.
+
+Measured on a project generated by nisperi-generador (Spring Boot 4.1, Java 25, 31 sources),
+from launching `mvn jiro:dev` to the first terminal verdict, on a loaded machine (load average
+6–12). The project's own suite costs about 0.5s, so a synthetic class of 100 tests at 100ms each
+was added to make the suite cost something:
+
+| start | time to first verdict |
+|---|---|
+| forced baseline, 100 + 2 tests | 12.1–13.1s |
+| resume, nothing changed | 2.2–7.0s (0 tests; the consistency check took 7–118ms) |
+| resume, one mapper method edited while stopped | 4.6s (1 test of 102) |
+| resume, a new 100-test class added while stopped | 13.8s (the 100 new tests) |
+
+With only the generated 2-test suite, resuming is no faster than a baseline. Its first cycle
+discovers tests in a cold fork, which costs about as much as running two tests. The saving grows
+with the cost of the suite.
+
 ## Roadmap
 
 1. Read the project's Surefire configuration — includes, excludes and system properties — rather
    than assuming its defaults.
 2. Engine-level include/exclude, so Cucumber and friends honour the same alignment.
 3. Multi-module reactor support.
-4. Persist fingerprints alongside the coverage index so a session can resume without a baseline run.
+4. ~~Persist fingerprints alongside the coverage index so a session can resume without a baseline
+   run.~~ Done; see "Resuming a session".
 5. A periodic fork restart, to bound static-state drift over a long session.
 6. Detect a `target/classes` that does not match the source tree at startup.
 7. An MCP server wrapping the index — `jiro_status`, `jiro_failures`, `jiro_impact_of(file)` — so an

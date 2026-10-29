@@ -70,6 +70,13 @@ mvn test-compile
 mvn jiro:dev
 ```
 
+Restarting does not rerun the suite. jiro persists its fingerprints next to the coverage index in
+`target/jiro/`. On the next start it resumes if the stored state still matches: same jiro build,
+JDK, dependency jars, resources and options. It recompiles what changed while it was stopped and
+runs only the tests those changes select, plus any that were failing. If anything does not match,
+it runs the full baseline and logs why. `-Djiro.baselineOnStartup=true` forces a baseline. See
+DESIGN.md, "Resuming a session".
+
 ## Why this exists
 
 Quarkus has continuous testing and it is genuinely good, but it only works if your application is
