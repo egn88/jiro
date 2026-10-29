@@ -14,6 +14,14 @@ public final class FingerprintStore {
         return snapshot.isEmpty();
     }
 
+    /**
+     * Replaces the snapshot with one persisted by an earlier session, so the next {@link #update}
+     * reports what changed while jiro was not running instead of reporting every class as added.
+     */
+    public void restore(Map<String, ClassFingerprint> persisted) {
+        snapshot = new HashMap<>(persisted);
+    }
+
     public Map<String, ClassFingerprint> current() {
         return Map.copyOf(snapshot);
     }

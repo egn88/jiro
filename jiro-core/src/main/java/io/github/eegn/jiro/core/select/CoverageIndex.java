@@ -2,8 +2,10 @@ package io.github.eegn.jiro.core.select;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -11,6 +13,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * The reverse map that test selection runs on: production method to the tests that entered it.
@@ -70,14 +74,23 @@ public final class CoverageIndex {
     /**
      * Writes the index as one line per test: the test id, a tab, then its covered methods.
      * Plain text on purpose, so a developer wondering why a test was picked can grep for it.
+     * Replaced atomically: a session killed mid-write must not leave half an index for the next
+     * one to resume from.
      */
     public void save(Path file) throws IOException {
         Files.createDirectories(file.getParent());
         List<String> lines = new ArrayList<>(methodsByTest.size());
-        for (Map.Entry<String, Set<String>> entry : methodsByTest.entrySet()) {
-            lines.add(entry.getKey() + '\t' + String.join(",", entry.getValue()));
+        for (Map.Entry<String, Set<String>> entry : new TreeMap<>(methodsByTest).entrySet()) {
+            lines.add(entry.getKey() + '\t' + String.join(",", new TreeSet<>(entry.getValue())));
         }
-        Files.write(file, lines, StandardCharsets.UTF_8);
+        Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
+        Files.write(temporary, lines, StandardCharsets.UTF_8);
+        try {
+            Files.move(temporary, file,
+                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException fallback) {
+            Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 
     public static CoverageIndex load(Path file) throws IOException {
