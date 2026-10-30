@@ -33,7 +33,7 @@ release tag — `main` carries the next snapshot, which is not the version refer
 ```
 git clone https://github.com/egn88/jiro.git
 cd jiro
-git checkout v0.0.1
+git checkout v0.0.2
 mvn install
 ```
 
@@ -43,14 +43,14 @@ Then, in the project you want to work on, either declare the plugin:
 <plugin>
   <groupId>io.github.egn88</groupId>
   <artifactId>jiro-maven-plugin</artifactId>
-  <version>0.0.1</version>
+  <version>0.0.2</version>
 </plugin>
 ```
 
 or invoke it without touching the pom at all:
 
 ```
-mvn io.github.egn88:jiro-maven-plugin:0.0.1:dev
+mvn io.github.egn88:jiro-maven-plugin:0.0.2:dev
 ```
 
 To get the short `mvn jiro:dev` form in any project, add the group once to `~/.m2/settings.xml`:
